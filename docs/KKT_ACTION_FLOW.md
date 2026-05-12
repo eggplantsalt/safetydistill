@@ -85,3 +85,9 @@ reduced action space and simpler safety layer, which aligns with the Phase 2 min
 - JSONL output should include non-empty `dual_variables`, `active_set`,
   `constraint_values`, and `constraint_gradients`.
 - For real experiments, restore the full perception pipeline.
+
+## Phase 4B reproducible smoke-test tooling
+
+- Dummy policy server is included under kkt_sense/scripts.
+- validate_kkt_labels.py checks JSONL field completeness and basic stats.
+- docs/KKT_SMOKE_TESTS.md lists repeatable smoke-test commands.

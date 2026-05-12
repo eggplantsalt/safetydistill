@@ -114,3 +114,9 @@ reduced action space and simpler safety layer, which aligns with the Phase 2 min
 - Targets include action, dual, active, h, and constraint_direction fields.
 - Masks support loss masking for missing KKT or no-safety-control cases.
 - This stage does not train a model.
+
+## Phase 8A OpenVLA-style sample export
+
+- Sidecar alignment with OpenVLA RLDS returned explicit_alignment_not_found.
+- Teacher rollout now exports full OpenVLA-style samples with images and KKT fields.
+- Export is opt-in and does not change default AEGIS behavior.

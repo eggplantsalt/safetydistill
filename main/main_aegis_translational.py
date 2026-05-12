@@ -28,6 +28,10 @@ from kkt_sense.aegis_adapter import build_aegis_step_record
 from kkt_sense.aegis_adapter import extract_cvxpy_qp_certificate
 from kkt_sense.aegis_adapter import make_episode_output_path
 from kkt_sense.label_exporter import export_episode
+from kkt_sense.openvla_sample_exporter import build_openvla_sample_manifest
+from kkt_sense.openvla_sample_exporter import build_state_fields
+from kkt_sense.openvla_sample_exporter import make_openvla_episode_dir
+from kkt_sense.openvla_sample_exporter import save_openvla_step_sample
 from utils import (
     compute_h_coeffs_3d,
     filtering_points,
@@ -80,6 +84,12 @@ class Args:
     #################################################################################################################
     enable_kkt_label_export: bool = False
     kkt_label_output_dir: str = "data/kkt_safelibero_labels"
+
+    #################################################################################################################
+    # OpenVLA-style sample export
+    #################################################################################################################
+    enable_openvla_sample_export: bool = False
+    openvla_sample_output_dir: str = "data/kkt_openvla_samples"
 
     seed: int = 7
 
@@ -145,6 +155,8 @@ def eval_libero(args: Args) -> None:
     episode_index = args.episode_index
     enable_kkt_label_export = args.enable_kkt_label_export
     kkt_label_output_dir = args.kkt_label_output_dir
+    enable_openvla_sample_export = args.enable_openvla_sample_export
+    openvla_sample_output_dir = args.openvla_sample_output_dir
 
     benchmark_dict = benchmark.get_benchmark_dict()
     task_suite = benchmark_dict[args.task_suite_name](safety_level=safety_level)
@@ -196,6 +208,16 @@ def eval_libero(args: Args) -> None:
             env.reset()
             action_plan = collections.deque()
             step_records = [] if enable_kkt_label_export else None
+
+            openvla_episode_dir = None
+            if enable_openvla_sample_export:
+                openvla_episode_dir = make_openvla_episode_dir(
+                    openvla_sample_output_dir,
+                    args.task_suite_name,
+                    safety_level,
+                    task_id,
+                    episode_idx,
+                )
 
             obs = env.set_init_state(initial_states[episode_idx])
 
@@ -376,8 +398,10 @@ def eval_libero(args: Args) -> None:
                     action = action_plan.popleft()
                     action_nominal = _action_to_list(action)
                     action_array = _action_to_numpy(action)
+                    action_delta = None
 
                     if flag_safety_control:
+                        gripper_qpos_current = obs.get("robot0_gripper_qpos")
                         action_movement = np.zeros_like(action_array)
                         action_movement[:3] = action_array[:3]
                         action_movement[6] = action_array[6]
@@ -438,12 +462,18 @@ def eval_libero(args: Args) -> None:
                         action_input[:3] = 0.2 * R1 @ u_v
                         action_input[6] = action_array[6]
                         action_safe = action_input.tolist()
+                        action_delta = (
+                            None
+                            if action_nominal is None
+                            else [safe - nominal for safe, nominal in zip(action_safe, action_nominal)]
+                        )
+
+                        step_extra_debug = _merge_debug_flags(
+                            base_debug_flags,
+                            certificate.get("extra_debug", {}),
+                        )
 
                         if enable_kkt_label_export:
-                            step_extra_debug = _merge_debug_flags(
-                                base_debug_flags,
-                                certificate.get("extra_debug", {}),
-                            )
                             step_records.append(
                                 build_aegis_step_record(
                                     task_suite_name=args.task_suite_name,
@@ -466,8 +496,41 @@ def eval_libero(args: Args) -> None:
 
                         obs, reward, done, info = env.step(action_input.tolist())
 
+                        if enable_openvla_sample_export and openvla_episode_dir is not None:
+                            state_vec = element["observation/state"].astype(float).tolist()
+                            gripper_qpos = gripper_qpos_current
+                            state_fields = build_state_fields(gripper_qpos)
+                            save_openvla_step_sample(
+                                episode_dir=openvla_episode_dir,
+                                step_index=t,
+                                agentview_img=img,
+                                wrist_img=wrist_img,
+                                task_suite_name=args.task_suite_name,
+                                safety_level=safety_level,
+                                task_index=task_id,
+                                episode_index=episode_idx,
+                                instruction=task_description,
+                                state=state_vec,
+                                state_fields=state_fields,
+                                action_nominal=action_nominal,
+                                action_safe=action_safe,
+                                action_delta=action_delta,
+                                dual_variables=certificate.get("dual_variables"),
+                                active_set=certificate.get("active_set"),
+                                constraint_values=certificate.get("constraint_values"),
+                                constraint_gradients=certificate.get("constraint_gradients"),
+                                qp_status=certificate.get("qp_status"),
+                                extra_debug=step_extra_debug,
+                            )
+
                     else:
+                        gripper_qpos_current = obs.get("robot0_gripper_qpos")
                         action_safe = action_nominal
+                        action_delta = (
+                            None
+                            if action_nominal is None
+                            else [safe - nominal for safe, nominal in zip(action_safe, action_nominal)]
+                        )
                         if enable_kkt_label_export:
                             step_records.append(
                                 build_aegis_step_record(
@@ -486,6 +549,33 @@ def eval_libero(args: Args) -> None:
                             )
 
                         obs, reward, done, info = env.step(action_array.tolist())
+
+                        if enable_openvla_sample_export and openvla_episode_dir is not None:
+                            state_vec = element["observation/state"].astype(float).tolist()
+                            gripper_qpos = gripper_qpos_current
+                            state_fields = build_state_fields(gripper_qpos)
+                            save_openvla_step_sample(
+                                episode_dir=openvla_episode_dir,
+                                step_index=t,
+                                agentview_img=img,
+                                wrist_img=wrist_img,
+                                task_suite_name=args.task_suite_name,
+                                safety_level=safety_level,
+                                task_index=task_id,
+                                episode_index=episode_idx,
+                                instruction=task_description,
+                                state=state_vec,
+                                state_fields=state_fields,
+                                action_nominal=action_nominal,
+                                action_safe=action_safe,
+                                action_delta=action_delta,
+                                dual_variables=None,
+                                active_set=None,
+                                constraint_values=None,
+                                constraint_gradients=None,
+                                qp_status="no_safety_control",
+                                extra_debug=dict(base_debug_flags),
+                            )
 
                     if collide_flag is False:
                         then_obstacle_pos = obs[obstacle_name + "_pos"]
@@ -535,6 +625,9 @@ def eval_libero(args: Args) -> None:
                     episode_idx,
                 )
                 export_episode(step_records, str(output_path))
+
+            if enable_openvla_sample_export:
+                build_openvla_sample_manifest(openvla_sample_output_dir)
 
             logging.info("Success: %s", done)
             logging.info("# episodes completed so far: %s", total_episodes)

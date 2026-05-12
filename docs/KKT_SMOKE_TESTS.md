@@ -138,3 +138,34 @@ Notes:
 - This script does not train a model.
 - It validates that dataset samples can be collated into training batches.
 - Torch/OpenVLA trainers can wrap this batch schema later.
+
+## Export OpenVLA-style KKT samples
+
+```
+python main/main_aegis_translational.py \
+  --task-suite-name safelibero_spatial \
+  --safety-level I \
+  --task-index 0 \
+  --episode-index 0 \
+  --num-trials-per-task 1 \
+  --num-steps-wait 20 \
+  --replan-steps 5 \
+  --debug-synthetic-safety-obstacle \
+  --enable-openvla-sample-export \
+  --openvla-sample-output-dir data/kkt_openvla_synthetic_debug \
+  --video-out-path results_kkt_openvla_synthetic_debug
+```
+
+Then inspect:
+
+```
+python -m kkt_sense.scripts.inspect_openvla_samples \
+  --manifest-path data/kkt_openvla_synthetic_debug/manifest.json \
+  --require-kkt \
+  --num-samples 3
+```
+
+Notes:
+- This is synthetic obstacle export, not a formal experiment.
+- It provides OpenVLA-style samples for student training adapters.
+- It avoids explicit alignment issues with RLDS + sidecar manifests.

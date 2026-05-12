@@ -160,9 +160,16 @@ def main() -> None:
 
     _print_records(sample_records, args.max_print_records)
 
-    if args.require_kkt_fields and missing_kkt_fields:
-        print("missing_kkt_fields:", missing_kkt_fields)
-        sys.exit(1)
+    if args.require_kkt_fields:
+        if not files:
+            print("error: no JSONL files found under path:", input_path)
+            sys.exit(1)
+        if stats["num_records"] == 0:
+            print("error: zero JSONL records found under path:", input_path)
+            sys.exit(1)
+        if missing_kkt_fields:
+            print("missing_kkt_fields:", missing_kkt_fields)
+            sys.exit(1)
 
 
 if __name__ == "__main__":

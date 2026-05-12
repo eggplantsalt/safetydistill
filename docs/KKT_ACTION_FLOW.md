@@ -97,3 +97,8 @@ reduced action space and simpler safety layer, which aligns with the Phase 2 min
 - generate_synthetic_kkt_dataset.py batches the synthetic QP/KKT smoke test.
 - It does not change AEGIS logic; it only orchestrates repeated runs.
 - Output is intended for downstream dataset interface debugging.
+
+## Phase 5B dataset manifest/index
+
+- build_kkt_manifest.py scans JSONL directories and emits manifest.json.
+- The manifest is intended as the dataset loader entrypoint for training.

@@ -95,3 +95,17 @@ Notes:
 - This generates 2 tasks × 2 episodes of prototype labels.
 - It uses a synthetic obstacle, not a formal experiment.
 - Intended for dataset loader and training pipeline debugging.
+
+## Build dataset manifest
+
+```
+python -m kkt_sense.scripts.build_kkt_manifest \
+  --input-path data/kkt_safelibero_synthetic_debug \
+  --output-path data/kkt_safelibero_synthetic_debug/manifest.json \
+  --dataset-name kkt_safelibero_synthetic_debug \
+  --require-kkt-fields
+```
+
+Notes:
+- manifest.json should not be committed; data/ is ignored by .gitignore.
+- Training loaders can read the manifest instead of rescanning JSONL files.

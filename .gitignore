@@ -1,0 +1,36 @@
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local debug / generated outputs
+data/
+results*/
+videos/
+*.mp4
+*.avi
+*.mov
+*.jsonl
+
+# Model checkpoints / weights
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Local large repos / datasets
+LIBERO/
+GroundingDINO/
+safelibero/libero/datasets/
+safelibero/datasets/
+openpi/third_party/libero/datasets/
+
+# Temporary server-side patch backups
+*.bak_*
+requirements.full.bak.txt
+requirements_no_*.txt
+
+# Accidental shell paste artifacts
+PY
+if
+*robosuite*

@@ -70,8 +70,35 @@ class Args:
 
     enable_kkt_label_export: bool = False  # Enable KKT-SenseVLA label export
     kkt_label_output_dir: str = "data/kkt_safelibero_labels"  # Output dir for JSONL labels
+    disable_groundingdino: bool = False  # Debug only: skip GroundingDINO perception and use empty point cloud
 
     seed: int = 7  # Random Seed (for reproducibility)
+
+
+
+
+def _action_to_numpy(action):
+    """Convert numpy/list/tuple action to a float numpy array."""
+    import numpy as _np
+
+    if hasattr(action, "detach"):
+        action = action.detach().cpu().numpy()
+    elif hasattr(action, "cpu") and hasattr(action, "numpy"):
+        action = action.cpu().numpy()
+
+    if isinstance(action, _np.ndarray):
+        return action.astype(float, copy=False)
+
+    if isinstance(action, (list, tuple)):
+        return _np.asarray(action, dtype=float)
+
+    raise TypeError(f"Unsupported action type: {type(action)}")
+
+
+def _action_to_list(action):
+    """Convert numpy/list/tuple action to a JSON-friendly float list."""
+    return _action_to_numpy(action).astype(float).tolist()
+
 
 
 def eval_libero(args: Args) -> None:
@@ -105,15 +132,19 @@ def eval_libero(args: Args) -> None:
 
     print("OK")
     client = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
-    from groundingdino.util.inference import load_model, load_image, predict, annotate
-    import cv2
-    CONFIG_PATH = "GroundingDINO/GroundingDINO_SwinT_OGC.py"    #源码自带的配置文件
-    CHECKPOINT_PATH = "GroundingDINO/groundingdino_swint_ogc.pth"   #下载的权重文件
-    DEVICE = "cuda"   #可以选择cpu/cuda
-    BOX_TRESHOLD = 0.35     #源码给定的边界框判定阈值
-    TEXT_TRESHOLD = 0.25    #源码给定的文本端获取关键属性阈值
+    if args.disable_groundingdino:
+        model_groundingdino = None
+        logging.warning("GroundingDINO disabled; using debug fallback obstacle perception.")
+    else:
+        from groundingdino.util.inference import load_model, load_image, predict, annotate
+        import cv2
+        CONFIG_PATH = "GroundingDINO/GroundingDINO_SwinT_OGC.py"    #源码自带的配置文件
+        CHECKPOINT_PATH = "GroundingDINO/groundingdino_swint_ogc.pth"   #下载的权重文件
+        DEVICE = "cuda"   #可以选择cpu/cuda
+        BOX_TRESHOLD = 0.35     #源码给定的边界框判定阈值
+        TEXT_TRESHOLD = 0.25    #源码给定的文本端获取关键属性阈值
 
-    model_groundingdino = load_model(CONFIG_PATH, CHECKPOINT_PATH)
+        model_groundingdino = load_model(CONFIG_PATH, CHECKPOINT_PATH)
     # Start evaluation
     total_episodes, total_successes = 0, 0
     # for task_id in tqdm.tqdm(range(num_tasks_in_suite)):
@@ -206,30 +237,51 @@ def eval_libero(args: Args) -> None:
 
             
             # 感知障碍物
-            agentview_img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
-            agentview_depth = np.ascontiguousarray(obs["agentview_depth"][::-1, ::-1])
-            # import matplotlib
-            # matplotlib.use('Agg')          
-            # import matplotlib.pyplot as plt
-            # plt.imsave(f"images/{episode_idx}.png", agentview_img)
-            # continue
-
             img_out_dir = out_dir/f"{episode_idx}"
             img_out_dir.mkdir(parents=True, exist_ok=True)
-            # 获取最容易撞到的障碍物
-            obstacle_infromation = obstacle_detection(agentview_img, task_description, args.task_suite_name)
-            # obstacle_infromation = "yellow rectangular book"
-            agent_view_points = get_point_cloud(agentview_img, agentview_depth, env, "agentview", obstacle_infromation, model_groundingdino, img_out_dir)
-            # import pandas as pd
-            # df = pd.DataFrame(agent_view_points, columns=["X", "Y", "Z"])
-            # df.to_csv("agent_view_points.csv", index=False)
-            
-            backview_img = np.ascontiguousarray(obs["backview_image"][::-1, ::-1])
-            backview_depth = np.ascontiguousarray(obs["backview_depth"][::-1, ::-1])
-            back_view_points = get_point_cloud(backview_img, backview_depth, env, "backview", obstacle_infromation, model_groundingdino, img_out_dir)
-            
-            # df = pd.DataFrame(back_view_points, columns=["X", "Y", "Z"])
-            # df.to_csv("back_view_points.csv", index=False)
+
+            if args.disable_groundingdino:
+                obstacle_infromation = "debug_dummy_obstacle"
+                # Debug fallback: use a small, far-away synthetic point cloud instead of an empty point cloud.
+                # The downstream filtering / ellipsoid fitting code expects non-empty point arrays.
+                # These points are intentionally far from the robot workspace so they should not create
+                # meaningful safety constraints during label-export smoke tests.
+                agent_view_points = np.array([
+                    [10.0, 10.0, 10.0],
+                    [10.1, 10.0, 10.0],
+                    [10.0, 10.1, 10.0],
+                    [10.0, 10.0, 10.1],
+                ], dtype=np.float32)
+                back_view_points = np.array([
+                    [10.2, 10.0, 10.0],
+                    [10.0, 10.2, 10.0],
+                    [10.0, 10.0, 10.2],
+                    [10.2, 10.2, 10.2],
+                ], dtype=np.float32)
+                logging.warning("GroundingDINO disabled for debug run; using far-away dummy point cloud.")
+            else:
+                agentview_img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
+                agentview_depth = np.ascontiguousarray(obs["agentview_depth"][::-1, ::-1])
+                # import matplotlib
+                # matplotlib.use('Agg')          
+                # import matplotlib.pyplot as plt
+                # plt.imsave(f"images/{episode_idx}.png", agentview_img)
+                # continue
+
+                # 获取最容易撞到的障碍物
+                obstacle_infromation = obstacle_detection(agentview_img, task_description, args.task_suite_name)
+                # obstacle_infromation = "yellow rectangular book"
+                agent_view_points = get_point_cloud(agentview_img, agentview_depth, env, "agentview", obstacle_infromation, model_groundingdino, img_out_dir)
+                # import pandas as pd
+                # df = pd.DataFrame(agent_view_points, columns=["X", "Y", "Z"])
+                # df.to_csv("agent_view_points.csv", index=False)
+                
+                backview_img = np.ascontiguousarray(obs["backview_image"][::-1, ::-1])
+                backview_depth = np.ascontiguousarray(obs["backview_depth"][::-1, ::-1])
+                back_view_points = get_point_cloud(backview_img, backview_depth, env, "backview", obstacle_infromation, model_groundingdino, img_out_dir)
+                
+                # df = pd.DataFrame(back_view_points, columns=["X", "Y", "Z"])
+                # df.to_csv("back_view_points.csv", index=False)
             
             if agent_view_points.shape[1] > 0 and back_view_points.shape[1] > 0:
                 full_points = np.vstack([agent_view_points, back_view_points])    # (Na + Nb, 3)
@@ -244,14 +296,21 @@ def eval_libero(args: Args) -> None:
             # df.to_csv("full_points.csv", index=False)
 
             # 点云过滤
-            filter_points = filtering_points(full_points)
-            # print("过滤后的点云数量：", filter_points.shape[0])
-            flag_safety_control = True
-            if filter_points.shape[0] == 0:
+            if args.disable_groundingdino:
+                # Debug-only path: skip perception-derived point filtering and ellipsoid fitting.
+                # This mode is only for verifying rollout + KKT JSONL export without GroundingDINO.
+                filter_points = np.empty((0, 3), dtype=np.float32)
                 flag_safety_control = False
-            # import pandas as pd
-            # df = pd.DataFrame(filter_points, columns=["X", "Y", "Z"])
-            # df.to_csv("filter_points.csv", index=False)
+                logging.warning("GroundingDINO disabled; skipping point filtering, ellipsoid fitting, and safety control.")
+            else:
+                filter_points = filtering_points(full_points, args.task_suite_name)
+                # print("过滤后的点云数量：", filter_points.shape[0])
+                flag_safety_control = True
+                if filter_points.shape[0] == 0:
+                    flag_safety_control = False
+                # import pandas as pd
+                # df = pd.DataFrame(filter_points, columns=["X", "Y", "Z"])
+                # df.to_csv("filter_points.csv", index=False)
 
             if flag_safety_control:
                 p2, R2, Q2_diag = fit_ellipse(filter_points, plot=True, save_path=img_out_dir)
@@ -438,6 +497,10 @@ def eval_libero(args: Args) -> None:
                                     action_nominal=action_nominal,
                                     action_safe=action_safe,
                                     qp_status="no_safety_control",
+                                    extra_debug={
+                                        "groundingdino_disabled": bool(args.disable_groundingdino),
+                                        "obstacle_information": obstacle_infromation,
+                                    },
                                 )
                             )
 

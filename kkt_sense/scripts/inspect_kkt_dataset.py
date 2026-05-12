@@ -32,10 +32,14 @@ def main() -> None:
         include_no_safety_control=args.include_no_safety_control,
     )
 
-    print("dataset_length:", len(dataset))
+    dataset_length = len(dataset)
+    print("dataset_length:", dataset_length)
     print("skipped_files:", dataset.skipped_files)
 
-    for idx in range(min(args.num_samples, len(dataset))):
+    if dataset_length == 0:
+        raise SystemExit("error: dataset is empty after filtering")
+
+    for idx in range(min(args.num_samples, dataset_length)):
         sample = dataset[idx]
         action_delta = sample.get("action_delta")
         delta_norm = float(np.linalg.norm(action_delta)) if action_delta is not None else None

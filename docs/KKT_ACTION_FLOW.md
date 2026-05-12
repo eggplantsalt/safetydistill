@@ -75,3 +75,13 @@ reduced action space and simpler safety layer, which aligns with the Phase 2 min
 - Fallback is marked in `extra_debug.used_nominal_fallback` and `qp_status` is suffixed
   with `_fallback_nominal`.
 - These fixes do not change the default behavior because KKT export remains opt-in.
+
+## Phase 4A synthetic safety obstacle smoke test
+
+- This mode is a smoke test to verify QP/KKT certificate export, not a formal experiment.
+- It skips GroundingDINO and real point-cloud perception.
+- It injects a synthetic obstacle ellipsoid close to the end-effector.
+- It forces `flag_safety_control=True` so the existing CBF-QP branch runs.
+- JSONL output should include non-empty `dual_variables`, `active_set`,
+  `constraint_values`, and `constraint_gradients`.
+- For real experiments, restore the full perception pipeline.

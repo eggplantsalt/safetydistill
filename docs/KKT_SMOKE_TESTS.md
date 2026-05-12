@@ -77,3 +77,21 @@ python -m kkt_sense.scripts.validate_kkt_labels \
   --path data/kkt_safelibero_labels_synth_qp_debug \
   --require-kkt-fields
 ```
+
+## Small synthetic KKT dataset generation
+
+```
+python -m kkt_sense.scripts.generate_synthetic_kkt_dataset \
+  --task-suite-name safelibero_spatial \
+  --safety-level I \
+  --task-indices 0,1 \
+  --episode-indices 0,1 \
+  --output-dir data/kkt_safelibero_synthetic_debug \
+  --video-out-path results_kkt_synthetic_debug \
+  --validate
+```
+
+Notes:
+- This generates 2 tasks × 2 episodes of prototype labels.
+- It uses a synthetic obstacle, not a formal experiment.
+- Intended for dataset loader and training pipeline debugging.

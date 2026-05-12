@@ -91,3 +91,9 @@ reduced action space and simpler safety layer, which aligns with the Phase 2 min
 - Dummy policy server is included under kkt_sense/scripts.
 - validate_kkt_labels.py checks JSONL field completeness and basic stats.
 - docs/KKT_SMOKE_TESTS.md lists repeatable smoke-test commands.
+
+## Phase 5A synthetic mini-dataset generation
+
+- generate_synthetic_kkt_dataset.py batches the synthetic QP/KKT smoke test.
+- It does not change AEGIS logic; it only orchestrates repeated runs.
+- Output is intended for downstream dataset interface debugging.

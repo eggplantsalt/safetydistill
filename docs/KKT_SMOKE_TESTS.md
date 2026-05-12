@@ -123,3 +123,18 @@ Notes:
 - This script does not run simulation.
 - It checks manifest + JSONL readability for training-side loaders.
 - Torch Dataset wrappers can be built on top of kkt_sense.dataset.KKTJsonlDataset.
+
+## Inspect training target batch
+
+```
+python -m kkt_sense.scripts.inspect_kkt_training_batch \
+  --manifest-path data/kkt_safelibero_synthetic_debug/manifest.json \
+  --require-kkt \
+  --action-target safe \
+  --batch-size 8
+```
+
+Notes:
+- This script does not train a model.
+- It validates that dataset samples can be collated into training batches.
+- Torch/OpenVLA trainers can wrap this batch schema later.

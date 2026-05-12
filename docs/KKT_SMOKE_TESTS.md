@@ -109,3 +109,17 @@ python -m kkt_sense.scripts.build_kkt_manifest \
 Notes:
 - manifest.json should not be committed; data/ is ignored by .gitignore.
 - Training loaders can read the manifest instead of rescanning JSONL files.
+
+## Inspect dataset loader
+
+```
+python -m kkt_sense.scripts.inspect_kkt_dataset \
+  --manifest-path data/kkt_safelibero_synthetic_debug/manifest.json \
+  --require-kkt \
+  --num-samples 3
+```
+
+Notes:
+- This script does not run simulation.
+- It checks manifest + JSONL readability for training-side loaders.
+- Torch Dataset wrappers can be built on top of kkt_sense.dataset.KKTJsonlDataset.

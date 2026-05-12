@@ -102,3 +102,8 @@ reduced action space and simpler safety layer, which aligns with the Phase 2 min
 
 - build_kkt_manifest.py scans JSONL directories and emits manifest.json.
 - The manifest is intended as the dataset loader entrypoint for training.
+
+## Phase 5C dataset loader
+
+- KKTJsonlDataset reads manifest.json and normalizes JSONL records into numpy fields.
+- It is the data interface base for future student training pipelines.

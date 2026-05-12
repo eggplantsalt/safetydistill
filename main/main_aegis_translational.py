@@ -371,18 +371,19 @@ def eval_libero(args: Args) -> None:
                     wrist_img = image_tools.convert_to_uint8(
                         image_tools.resize_with_pad(wrist_img, args.resize_size, args.resize_size)
                     )
+                    current_state = np.concatenate(
+                        (
+                            obs["robot0_eef_pos"],
+                            _quat2axisangle(obs["robot0_eef_quat"]),
+                            obs["robot0_gripper_qpos"],
+                        )
+                    )
 
                     if not action_plan:
                         element = {
                             "observation/image": img,
                             "observation/wrist_image": wrist_img,
-                            "observation/state": np.concatenate(
-                                (
-                                    obs["robot0_eef_pos"],
-                                    _quat2axisangle(obs["robot0_eef_quat"]),
-                                    obs["robot0_gripper_qpos"],
-                                )
-                            ),
+                            "observation/state": current_state,
                             "prompt": str(task_description),
                         }
 
@@ -497,7 +498,7 @@ def eval_libero(args: Args) -> None:
                         obs, reward, done, info = env.step(action_input.tolist())
 
                         if enable_openvla_sample_export and openvla_episode_dir is not None:
-                            state_vec = element["observation/state"].astype(float).tolist()
+                            state_vec = current_state.astype(float).tolist()
                             gripper_qpos = gripper_qpos_current
                             state_fields = build_state_fields(gripper_qpos)
                             save_openvla_step_sample(
@@ -551,7 +552,7 @@ def eval_libero(args: Args) -> None:
                         obs, reward, done, info = env.step(action_array.tolist())
 
                         if enable_openvla_sample_export and openvla_episode_dir is not None:
-                            state_vec = element["observation/state"].astype(float).tolist()
+                            state_vec = current_state.astype(float).tolist()
                             gripper_qpos = gripper_qpos_current
                             state_fields = build_state_fields(gripper_qpos)
                             save_openvla_step_sample(

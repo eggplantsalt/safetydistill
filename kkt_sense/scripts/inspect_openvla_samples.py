@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Tuple
 
 
 def _load_manifest(path: Path) -> Dict[str, Any]:
@@ -25,17 +25,22 @@ def _record_has_kkt(record: Dict[str, Any]) -> bool:
     )
 
 
-def _iter_records(steps_path: Path, num_samples: int) -> List[Dict[str, Any]]:
+def _iter_records(episode_dir: Path, steps_path: Path, num_samples: int) -> List[Tuple[Path, Dict[str, Any]]]:
     records = []
     with steps_path.open("r", encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if not line:
                 continue
-            records.append(json.loads(line))
+            records.append((episode_dir, json.loads(line)))
             if len(records) >= num_samples:
                 break
     return records
+
+
+def _resolve_record_path(episode_dir: Path, record: Dict[str, Any], key: str) -> Path:
+    rel = record.get(key, "")
+    return (episode_dir / rel).resolve()
 
 
 def main() -> int:
@@ -50,6 +55,8 @@ def main() -> int:
     base_dir = manifest_path.parent
 
     episodes = manifest.get("episodes", [])
+    print("dataset_name:", manifest.get("dataset_name"))
+    print("format:", manifest.get("format"))
     print("num_episodes:", manifest.get("num_episodes"))
     print("num_records:", manifest.get("num_records"))
 
@@ -57,42 +64,63 @@ def main() -> int:
     for episode in episodes:
         if len(samples) >= args.num_samples:
             break
-        steps_path = episode.get("steps_path")
-        if steps_path is None:
+
+        episode_dir_rel = episode.get("episode_dir")
+        steps_path_rel = episode.get("steps_path")
+        if episode_dir_rel is None or steps_path_rel is None:
             continue
-        steps_file = (base_dir / steps_path).resolve()
-        samples.extend(_iter_records(steps_file, args.num_samples - len(samples)))
+
+        episode_dir = (base_dir / episode_dir_rel).resolve()
+        steps_file = (base_dir / steps_path_rel).resolve()
+        if not steps_file.exists():
+            print("missing_steps_file:", steps_file)
+            continue
+
+        samples.extend(_iter_records(episode_dir, steps_file, args.num_samples - len(samples)))
 
     if not samples:
-        print("No samples found.")
+        print("error: no samples found.")
         return 1
 
-    first = samples[0]
-    agentview_path = base_dir / first.get("agentview_image_path", "")
-    wrist_path = base_dir / first.get("wrist_image_path", "")
+    for idx, (episode_dir, record) in enumerate(samples):
+        agentview_path = _resolve_record_path(episode_dir, record, "agentview_image_path")
+        wrist_path = _resolve_record_path(episode_dir, record, "wrist_image_path")
 
-    print("first_sample_instruction:", first.get("instruction"))
-    print("agentview_image_path:", agentview_path)
-    print("wrist_image_path:", wrist_path)
-    print("agentview_exists:", agentview_path.exists())
-    print("wrist_exists:", wrist_path.exists())
+        state = record.get("state") or []
+        state_fields = record.get("state_fields") or []
+        action_nominal = record.get("action_nominal") or []
+        action_safe = record.get("action_safe") or []
+        action_delta = record.get("action_delta") or []
+        kkt_present = _record_has_kkt(record)
 
-    state = first.get("state") or []
-    action_nominal = first.get("action_nominal") or []
-    action_safe = first.get("action_safe") or []
-    action_delta = first.get("action_delta") or []
+        print("sample_index:", idx)
+        print("  task_index:", record.get("task_index"))
+        print("  episode_index:", record.get("episode_index"))
+        print("  step_index:", record.get("step_index"))
+        print("  instruction:", record.get("instruction"))
+        print("  agentview_image_path:", agentview_path)
+        print("  wrist_image_path:", wrist_path)
+        print("  agentview_exists:", agentview_path.exists())
+        print("  wrist_exists:", wrist_path.exists())
+        print("  state_length:", len(state))
+        print("  state_fields_length:", len(state_fields))
+        print("  action_nominal_length:", len(action_nominal))
+        print("  action_safe_length:", len(action_safe))
+        print("  action_delta_length:", len(action_delta))
+        print("  qp_status:", record.get("qp_status"))
+        print("  kkt_fields_present:", kkt_present)
 
-    print("state_length:", len(state))
-    print("action_nominal_length:", len(action_nominal))
-    print("action_safe_length:", len(action_safe))
-    print("action_delta_length:", len(action_delta))
+        if not agentview_path.exists() or not wrist_path.exists():
+            print("error: missing image file for sample", idx)
+            return 1
 
-    kkt_present = _record_has_kkt(first)
-    print("kkt_fields_present:", kkt_present)
+        if len(state) != len(state_fields):
+            print("error: state/state_fields length mismatch for sample", idx)
+            return 1
 
-    if args.require_kkt and not kkt_present:
-        print("Missing KKT fields in sample.")
-        return 1
+        if args.require_kkt and not kkt_present:
+            print("error: missing KKT fields in sample", idx)
+            return 1
 
     return 0
 

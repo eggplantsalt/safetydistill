@@ -47,6 +47,9 @@ def make_openvla_episode_dir(
         episode_index,
     )
     (episode_dir / "images").mkdir(parents=True, exist_ok=True)
+    steps_path = episode_dir / "steps.jsonl"
+    if steps_path.exists():
+        steps_path.unlink()
     return episode_dir
 
 

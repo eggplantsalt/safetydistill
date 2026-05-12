@@ -283,9 +283,16 @@ def main() -> int:
 
     write_manifest(manifest, output_path)
 
-    if args.require_kkt_fields and missing_kkt_files > 0:
-        print(f"missing_kkt_files: {missing_kkt_files}")
-        return 1
+    if args.require_kkt_fields:
+        if manifest["num_files"] == 0:
+            print(f"error: no JSONL files found under input path: {input_path}")
+            return 1
+        if manifest["num_records"] == 0:
+            print(f"error: zero JSONL records found under input path: {input_path}")
+            return 1
+        if missing_kkt_files > 0:
+            print(f"missing_kkt_files: {missing_kkt_files}")
+            return 1
 
     print(f"manifest_path: {output_path}")
     print(f"num_files: {manifest['num_files']}")

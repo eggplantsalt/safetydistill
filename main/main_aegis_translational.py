@@ -5,6 +5,7 @@ import math
 import pathlib
 import time
 import imageio
+import sys
 from libero.libero import benchmark
 from libero.libero import get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
@@ -16,6 +17,15 @@ import tyro
 import mujoco
 import cvxpy as cp
 from scipy.spatial.transform import Rotation as R
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from kkt_sense.aegis_adapter import build_aegis_step_record
+from kkt_sense.aegis_adapter import extract_cvxpy_qp_certificate
+from kkt_sense.aegis_adapter import make_episode_output_path
+from kkt_sense.label_exporter import export_episode
 from utils import rot3, quat_R, quat_euler, vector_hat, project_matrix, \
     compute_h_ij, compute_h_coeffs_3d, get_point_cloud, filtering_points, fit_ellipse, plot_points_ellipse, \
     obstacle_detection
@@ -58,6 +68,9 @@ class Args:
     #################################################################################################################
     video_out_path: str = "results_new"  # Path to save videos
 
+    enable_kkt_label_export: bool = False  # Enable KKT-SenseVLA label export
+    kkt_label_output_dir: str = "data/kkt_safelibero_labels"  # Output dir for JSONL labels
+
     seed: int = 7  # Random Seed (for reproducibility)
 
 
@@ -67,6 +80,8 @@ def eval_libero(args: Args) -> None:
     safety_level = args.safety_level
     task_index = args.task_index
     episode_index = args.episode_index
+    enable_kkt_label_export = args.enable_kkt_label_export
+    kkt_label_output_dir = args.kkt_label_output_dir
     # Initialize LIBERO task suite
     benchmark_dict = benchmark.get_benchmark_dict()
     task_suite = benchmark_dict[args.task_suite_name](safety_level=safety_level)
@@ -137,6 +152,8 @@ def eval_libero(args: Args) -> None:
             # Reset environment
             env.reset()
             action_plan = collections.deque()
+
+            step_records = [] if enable_kkt_label_export else None
 
             # print("Joint names (qpos):", env.sim.model.joint_names)
             # a
@@ -310,13 +327,15 @@ def eval_libero(args: Args) -> None:
                     # print("t={}, 一次推理的时间={}".format(t, t2-t1))
 
                     action = action_plan.popleft()
+                    action_nominal = _action_to_list(action)
+                    action_array = _action_to_numpy(action)
                     t3 = time.time()
                     if flag_safety_control:
                         # pos_err = p_target - p1
                         # v_ref = Kp_pos * pos_err
-                        action_movement = np.zeros_like(action.tolist())
-                        action_movement[:3] = action[:3]
-                        action_movement[6] = action[6]
+                        action_movement = np.zeros_like(action_array)
+                        action_movement[:3] = action_array[:3]
+                        action_movement[6] = action_array[6]
                         
 
                         v_ref =  Kp_pos * R1.T @ action_movement[:3]
@@ -339,17 +358,29 @@ def eval_libero(args: Args) -> None:
                         # --- 求解 QP ---
                         prob = cp.Problem(objective, constraints)
                         prob.solve(solver=cp.OSQP)
+                        u_value = u.value if u.value is not None else None
+                        certificate = extract_cvxpy_qp_certificate(
+                            prob=prob,
+                            constraints=constraints,
+                            h=h,
+                            a_u_v=a_u_v,
+                            a_uz=a_uz,
+                            u_ref_vec=u_ref_vec,
+                            u_value=u_value,
+                        )
                         # --- 读取优化结果 ---
                         if u.value is not None:
                             u_v = u.value[:3]
                             # u_omega = u.value[3:6]
                             u_z = u.value[3:]
+                            certificate["extra_debug"]["used_nominal_fallback"] = False
                         else:
-                            u_v = v_ref2
+                            u_v = u_v_ref
                             # u_omega = omega_ref
                             u_z = u_z_nom
-                            print("无可行解")
-                            a
+                            print("QP infeasible or no solution; fallback to nominal reference")
+                            certificate["extra_debug"]["used_nominal_fallback"] = True
+                            certificate["qp_status"] = f"{certificate['qp_status']}_fallback_nominal"
                         # print("t={}".format(t))
                         # print("u:", u.value)
 
@@ -365,13 +396,52 @@ def eval_libero(args: Args) -> None:
                         action_input[:3] = 0.2 * R1 @ u_v
                         action_input[6] = action[6]  # 保持夹爪闭合
                         # print("action_input:", action_input)
+                        action_safe = action_input.tolist()
+
+                        if enable_kkt_label_export:
+                            step_records.append(
+                                build_aegis_step_record(
+                                    task_suite_name=args.task_suite_name,
+                                    safety_level=safety_level,
+                                    task_index=task_id,
+                                    episode_index=episode_idx,
+                                    step_index=t,
+                                    instruction=task_description,
+                                    observation_metadata={"timestep": t},
+                                    action_nominal=action_nominal,
+                                    action_safe=action_safe,
+                                    constraint_values=certificate["constraint_values"],
+                                    constraint_gradients=certificate["constraint_gradients"],
+                                    dual_variables=certificate["dual_variables"],
+                                    active_set=certificate["active_set"],
+                                    qp_status=certificate["qp_status"],
+                                    extra_debug=certificate["extra_debug"],
+                                )
+                            )
                         t4 = time.time()
 
                         obs, reward, done, info = env.step(action_input.tolist()) #关键的一步
                     else:
                         t4 = time.time()
 
-                        obs, reward, done, info = env.step(action.tolist()) #关键的一步
+                        action_safe = action_nominal
+                        if enable_kkt_label_export:
+                            step_records.append(
+                                build_aegis_step_record(
+                                    task_suite_name=args.task_suite_name,
+                                    safety_level=safety_level,
+                                    task_index=task_id,
+                                    episode_index=episode_idx,
+                                    step_index=t,
+                                    instruction=task_description,
+                                    observation_metadata={"timestep": t},
+                                    action_nominal=action_nominal,
+                                    action_safe=action_safe,
+                                    qp_status="no_safety_control",
+                                )
+                            )
+
+                        obs, reward, done, info = env.step(action_array.tolist()) #关键的一步
 
 
                     
@@ -425,6 +495,16 @@ def eval_libero(args: Args) -> None:
                 [np.asarray(x) for x in replay_images],
                 fps=30,
             )
+
+            if enable_kkt_label_export:
+                output_path = make_episode_output_path(
+                    kkt_label_output_dir,
+                    args.task_suite_name,
+                    safety_level,
+                    task_id,
+                    episode_idx,
+                )
+                export_episode(step_records, str(output_path))
 
             # Log current results
             logging.info(f"Success: {done}")

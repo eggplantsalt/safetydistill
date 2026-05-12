@@ -107,3 +107,10 @@ reduced action space and simpler safety layer, which aligns with the Phase 2 min
 
 - KKTJsonlDataset reads manifest.json and normalizes JSONL records into numpy fields.
 - It is the data interface base for future student training pipelines.
+
+## Phase 6A training target schema
+
+- training_targets.py converts dataset samples into targets and masks.
+- Targets include action, dual, active, h, and constraint_direction fields.
+- Masks support loss masking for missing KKT or no-safety-control cases.
+- This stage does not train a model.

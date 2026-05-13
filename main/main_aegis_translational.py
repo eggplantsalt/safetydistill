@@ -3,6 +3,9 @@ import dataclasses
 import logging
 import math
 import pathlib
+import json
+import urllib.error
+import urllib.request
 import sys
 import warnings
 from typing import List
@@ -55,6 +58,8 @@ class Args:
     #################################################################################################################
     host: str = "0.0.0.0"
     port: int = 8000
+    policy_server_type: str = "websocket"  # websocket | openvla-http
+    policy_timeout_sec: float = 120.0
     resize_size: int = 224
     replan_steps: int = 5
 
@@ -147,6 +152,76 @@ def _normalize_vector(vec, fallback=None):
     return vec / norm
 
 
+
+def _postprocess_openvla_action_for_libero(action):
+    """Match OpenVLA-OFT LIBERO eval action postprocessing.
+
+    OpenVLA-OFT predicts gripper action in the dataset convention. Its LIBERO
+    eval path normalizes the last dimension from [0, 1] to [-1, 1], binarizes,
+    then flips the sign for OpenVLA.
+    """
+    action_array = _action_to_numpy(action).astype(float)
+    if action_array.shape[-1] < 7:
+        raise ValueError("Expected OpenVLA action with at least 7 dims, got shape {}".format(action_array.shape))
+
+    action_array = action_array.copy()
+    action_array[..., -1] = 2.0 * action_array[..., -1] - 1.0
+    action_array[..., -1] = np.sign(action_array[..., -1])
+    action_array[..., -1] *= -1.0
+    return action_array.tolist()
+
+
+def _infer_action_chunk(policy_client, args, element):
+    """Infer action chunk from either the original websocket policy or OpenVLA-OFT HTTP server."""
+    if args.policy_server_type == "websocket":
+        return policy_client.infer(element)["actions"]
+
+    if args.policy_server_type == "openvla-http":
+        endpoint = "http://{}:{}/act".format(args.host, args.port)
+        payload = {
+            "instruction": element["prompt"],
+            "full_image": np.asarray(element["observation/image"]).tolist(),
+            "wrist_image": np.asarray(element["observation/wrist_image"]).tolist(),
+            "state": np.asarray(element["observation/state"], dtype=float).tolist(),
+        }
+
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=float(args.policy_timeout_sec)) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.URLError as exc:
+            raise RuntimeError("OpenVLA HTTP policy request failed: {}".format(exc)) from exc
+
+        if not isinstance(response_payload, dict):
+            raise RuntimeError(
+                "OpenVLA HTTP response must be a dict with key 'actions'; got type {} value {!r}".format(
+                    type(response_payload), response_payload
+                )
+            )
+
+        if "actions" not in response_payload:
+            raise RuntimeError("OpenVLA HTTP response missing 'actions': {}".format(response_payload))
+
+        action_chunk = response_payload["actions"]
+        if not isinstance(action_chunk, list):
+            raise RuntimeError(
+                "OpenVLA HTTP response 'actions' must be a list; got type {} value {!r}".format(
+                    type(action_chunk), action_chunk
+                )
+            )
+
+        return [_postprocess_openvla_action_for_libero(action) for action in action_chunk]
+
+    raise ValueError("Unsupported policy_server_type: {}".format(args.policy_server_type))
+
+
+
 def eval_libero(args: Args) -> None:
     np.random.seed(args.seed)
 
@@ -178,7 +253,12 @@ def eval_libero(args: Args) -> None:
         raise ValueError("Unknown task suite: {}".format(args.task_suite_name))
 
     print("OK")
-    client = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
+    if args.policy_server_type == "websocket":
+        client = _websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
+    elif args.policy_server_type == "openvla-http":
+        client = None
+    else:
+        raise ValueError("Unsupported policy_server_type: {}".format(args.policy_server_type))
     model_groundingdino = _load_groundingdino_if_needed(args)
 
     total_episodes, total_successes = 0, 0
@@ -387,7 +467,7 @@ def eval_libero(args: Args) -> None:
                             "prompt": str(task_description),
                         }
 
-                        action_chunk = client.infer(element)["actions"]
+                        action_chunk = _infer_action_chunk(client, args, element)
                         assert len(action_chunk) >= args.replan_steps, (
                             "We want to replan every {} steps, but policy only predicts {} steps.".format(
                                 args.replan_steps,
